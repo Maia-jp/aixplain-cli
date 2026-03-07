@@ -35,8 +35,8 @@ impl ResolvedConfig {
 
 /// Build a ResolvedConfig from the environment (.env files + env vars + optional CLI override).
 pub fn resolve(api_key_override: Option<&str>) -> anyhow::Result<ResolvedConfig> {
-    // Load .env from CWD (ignore if missing)
-    let _ = dotenvy::dotenv();
+    // Load .env from CWD — override existing env vars so .env always wins
+    let _ = dotenvy::dotenv_override();
 
     let api_key = api_key_override
         .map(String::from)

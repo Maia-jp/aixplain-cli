@@ -23,14 +23,13 @@ fn long_version() -> &'static str {
     version,
     long_version = long_version(),
     propagate_version = true,
-    arg_required_else_help = true,
 )]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Commands,
+    pub command: Option<Commands>,
 
-    /// Override API key
-    #[arg(long, global = true, env = "AIXPLAIN_API_KEY", hide_env_values = true)]
+    /// Override API key (takes precedence over .env and environment)
+    #[arg(long, global = true)]
     pub api_key: Option<String>,
 
     /// Use named profile
@@ -52,6 +51,9 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
+    /// Launch interactive TUI browser
+    Browse,
+
     /// Browse and run models
     Models {
         #[command(subcommand)]
@@ -401,8 +403,20 @@ fn build_client(api_key_override: Option<&str>) -> Result<crate::client::AixClie
     crate::client::AixClient::new(&config).map_err(Into::into)
 }
 
+async fn launch_tui(api_key: Option<&str>) -> Result<()> {
+    let client = std::sync::Arc::new(build_client(api_key)?);
+    crate::tui::run(client).await
+}
+
 pub async fn dispatch(cli: Cli) -> Result<()> {
-    match cli.command {
+    let command = match cli.command {
+        Some(cmd) => cmd,
+        None => return launch_tui(cli.api_key.as_deref()).await,
+    };
+
+    match command {
+        Commands::Browse => return launch_tui(cli.api_key.as_deref()).await,
+
         Commands::Models { command } => {
             let client = build_client(cli.api_key.as_deref())?;
             match command {

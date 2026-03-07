@@ -53,7 +53,7 @@ pub async fn poll_until_complete(
     client: &AixClient,
     poll_url: &str,
     config: &PollConfig,
-    on_poll: Option<&dyn Fn(&PollResponse)>,
+    on_poll: Option<&(dyn Fn(&PollResponse) + Send + Sync)>,
 ) -> Result<PollResponse, AixError> {
     let start = Instant::now();
     let mut interval = config.initial_interval;

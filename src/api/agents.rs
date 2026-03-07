@@ -101,7 +101,7 @@ pub async fn run_agent(
     session_id: Option<&str>,
     output_format: &str,
     timeout_secs: u64,
-    on_progress: Option<&dyn Fn(&str)>,
+    on_progress: Option<&(dyn Fn(&str) + Send + Sync)>,
 ) -> Result<AgentRunResult, AixError> {
     let body = AgentRunRequest {
         id: id.to_string(),
@@ -135,7 +135,7 @@ pub async fn run_agent(
             timeout: Duration::from_secs(timeout_secs),
             ..Default::default()
         },
-        poll_cb.as_ref().map(|f| f as &dyn Fn(&_)),
+        poll_cb.as_ref().map(|f| f as &(dyn Fn(&_) + Send + Sync)),
     )
     .await?;
 

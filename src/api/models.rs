@@ -73,7 +73,7 @@ pub async fn run_model(
     id: &str,
     input: &ModelInput,
     timeout_secs: u64,
-    on_progress: Option<&dyn Fn(&PollResponse)>,
+    on_progress: Option<&(dyn Fn(&PollResponse) + Send + Sync)>,
 ) -> Result<ModelResult, AixError> {
     let model = get_model(client, id).await?;
     let payload = build_run_payload(input);
@@ -115,7 +115,7 @@ async fn run_async(
     id: &str,
     payload: &serde_json::Value,
     timeout_secs: u64,
-    on_progress: Option<&dyn Fn(&PollResponse)>,
+    on_progress: Option<&(dyn Fn(&PollResponse) + Send + Sync)>,
 ) -> Result<ModelResult, AixError> {
     let url = client.models_url(id);
     let response: serde_json::Value = client.post_url(&url, payload).await?;

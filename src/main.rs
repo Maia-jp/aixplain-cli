@@ -5,6 +5,7 @@ mod cli;
 mod client;
 mod config;
 mod models;
+mod tui;
 
 use anyhow::Result;
 use clap::Parser;
