@@ -26,44 +26,64 @@ pub async fn get_agent(client: &AixClient, id: &str) -> Result<Agent, AixError> 
     client.get(&format!("v2/agents/{id}")).await
 }
 
+pub struct CreateAgentParams<'a> {
+    pub name: &'a str,
+    pub instructions: Option<&'a str>,
+    pub llm_id: Option<&'a str>,
+    pub tool_ids: &'a [String],
+    pub subagent_ids: &'a [String],
+    pub max_iterations: i32,
+    pub max_tokens: i32,
+}
+
 pub async fn create_agent(
     client: &AixClient,
-    name: &str,
-    instructions: Option<&str>,
-    llm_id: Option<&str>,
-    tool_ids: &[String],
-    max_iterations: i32,
-    max_tokens: i32,
+    params: &CreateAgentParams<'_>,
 ) -> Result<Agent, AixError> {
-    let tools: Vec<serde_json::Value> = tool_ids.iter().map(|id| json!({"assetId": id})).collect();
-
-    let llm = llm_id.unwrap_or("669a63646eb56306647e1091");
+    let tools: Vec<serde_json::Value> = params
+        .tool_ids
+        .iter()
+        .map(|id| json!({"assetId": id}))
+        .collect();
+    let subagents: Vec<serde_json::Value> = params
+        .subagent_ids
+        .iter()
+        .map(|id| json!({"id": id, "inspectors": []}))
+        .collect();
+    let llm = params.llm_id.unwrap_or("669a63646eb56306647e1091");
 
     let body = json!({
-        "name": name,
-        "description": instructions,
-        "instructions": instructions,
+        "name": params.name,
+        "description": params.instructions,
+        "instructions": params.instructions,
         "model": {"id": llm},
         "tools": tools,
         "status": "onboarded",
-        "maxIterations": max_iterations,
-        "maxTokens": max_tokens,
+        "maxIterations": params.max_iterations,
+        "maxTokens": params.max_tokens,
         "outputFormat": "text",
-        "agents": [],
+        "agents": subagents,
         "tasks": [],
     });
 
     client.post("v2/agents", &body).await
 }
 
+pub struct UpdateAgentParams<'a> {
+    pub id: &'a str,
+    pub name: Option<&'a str>,
+    pub instructions: Option<&'a str>,
+    pub llm_id: Option<&'a str>,
+    pub replace_tools: Option<&'a [String]>,
+    pub add_tools: &'a [String],
+    pub replace_subagents: Option<&'a [String]>,
+}
+
 pub async fn update_agent(
     client: &AixClient,
-    id: &str,
-    name: Option<&str>,
-    instructions: Option<&str>,
-    llm_id: Option<&str>,
-    tool_ids: Option<&[String]>,
+    params: &UpdateAgentParams<'_>,
 ) -> Result<Agent, AixError> {
+    let id = params.id;
     let mut current: serde_json::Value = client.get(&format!("v2/agents/{id}")).await?;
     let obj = current
         .as_object_mut()
@@ -72,19 +92,38 @@ pub async fn update_agent(
             supplier_error: None,
         })?;
 
-    if let Some(n) = name {
+    if let Some(n) = params.name {
         obj.insert("name".into(), json!(n));
     }
-    if let Some(inst) = instructions {
+    if let Some(inst) = params.instructions {
         obj.insert("instructions".into(), json!(inst));
         obj.insert("description".into(), json!(inst));
     }
-    if let Some(llm) = llm_id {
+    if let Some(llm) = params.llm_id {
         obj.insert("model".into(), json!({"id": llm}));
     }
-    if let Some(tools) = tool_ids {
-        let t: Vec<serde_json::Value> = tools.iter().map(|id| json!({"assetId": id})).collect();
+
+    if let Some(tools) = params.replace_tools {
+        let t: Vec<serde_json::Value> = tools.iter().map(|tid| json!({"assetId": tid})).collect();
         obj.insert("tools".into(), json!(t));
+    } else if !params.add_tools.is_empty() {
+        let mut existing = obj
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        for tid in params.add_tools {
+            existing.push(json!({"assetId": tid}));
+        }
+        obj.insert("tools".into(), json!(existing));
+    }
+
+    if let Some(subs) = params.replace_subagents {
+        let s: Vec<serde_json::Value> = subs
+            .iter()
+            .map(|sid| json!({"id": sid, "inspectors": []}))
+            .collect();
+        obj.insert("agents".into(), json!(s));
     }
 
     client.put(&format!("v2/agents/{id}"), &current).await

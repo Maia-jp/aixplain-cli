@@ -181,10 +181,15 @@ pub enum AgentsCommands {
         instructions: Option<String>,
         #[arg(long)]
         instructions_file: Option<String>,
-        #[arg(long, help = "LLM model ID")]
+        #[arg(long, help = "LLM model ID to use as the agent's brain")]
         llm: Option<String>,
-        #[arg(long, help = "Tool IDs to attach")]
+        #[arg(long, help = "Tool or model IDs to attach (repeatable)")]
         tool: Vec<String>,
+        #[arg(
+            long,
+            help = "Sub-agent IDs for multi-agent orchestration (repeatable)"
+        )]
+        subagent: Vec<String>,
         #[arg(long, default_value = "5")]
         max_iterations: i32,
         #[arg(long, default_value = "2048")]
@@ -197,10 +202,14 @@ pub enum AgentsCommands {
         name: Option<String>,
         #[arg(short, long)]
         instructions: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "LLM model ID")]
         llm: Option<String>,
-        #[arg(long)]
+        #[arg(long, help = "Replace tools (repeatable, pass all desired IDs)")]
         tool: Vec<String>,
+        #[arg(long, help = "Add tool/model ID to existing tools")]
+        add_tool: Vec<String>,
+        #[arg(long, help = "Replace sub-agents (repeatable)")]
+        subagent: Vec<String>,
     },
     /// Delete an agent
     Delete {
@@ -525,6 +534,7 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
                     instructions_file,
                     llm,
                     tool,
+                    subagent,
                     max_iterations,
                     max_tokens,
                 } => {
@@ -536,12 +546,15 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
                     let spinner = maybe_spinner("Creating agent...", cli.json);
                     let agent = crate::api::agents::create_agent(
                         &client,
-                        &name,
-                        inst.as_deref(),
-                        llm.as_deref(),
-                        &tool,
-                        max_iterations,
-                        max_tokens,
+                        &crate::api::agents::CreateAgentParams {
+                            name: &name,
+                            instructions: inst.as_deref(),
+                            llm_id: llm.as_deref(),
+                            tool_ids: &tool,
+                            subagent_ids: &subagent,
+                            max_iterations,
+                            max_tokens,
+                        },
                     )
                     .await;
                     finish_spinner(spinner);
@@ -562,20 +575,31 @@ pub async fn dispatch(cli: Cli) -> Result<()> {
                     instructions,
                     llm,
                     tool,
+                    add_tool,
+                    subagent,
                 } => {
-                    let tools = if tool.is_empty() {
+                    let replace_tools = if tool.is_empty() {
                         None
                     } else {
                         Some(tool.as_slice())
                     };
+                    let replace_subagents = if subagent.is_empty() {
+                        None
+                    } else {
+                        Some(subagent.as_slice())
+                    };
                     let spinner = maybe_spinner("Updating agent...", cli.json);
                     let agent = crate::api::agents::update_agent(
                         &client,
-                        &id,
-                        name.as_deref(),
-                        instructions.as_deref(),
-                        llm.as_deref(),
-                        tools,
+                        &crate::api::agents::UpdateAgentParams {
+                            id: &id,
+                            name: name.as_deref(),
+                            instructions: instructions.as_deref(),
+                            llm_id: llm.as_deref(),
+                            replace_tools,
+                            add_tools: &add_tool,
+                            replace_subagents,
+                        },
                     )
                     .await;
                     finish_spinner(spinner);

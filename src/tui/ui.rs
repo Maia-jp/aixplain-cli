@@ -526,7 +526,8 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )
     } else {
         Span::styled(
-            " j/k navigate  l detail  r run  ]/[ tabs  / search  c copy  ? help  q quit".to_string(),
+            " j/k navigate  l detail  r run  ]/[ tabs  / search  c copy  ? help  q quit"
+                .to_string(),
             Style::default().fg(GRAY),
         )
     };
