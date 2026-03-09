@@ -18,6 +18,30 @@ $ aix models list --limit 5
 
 ## Installation
 
+### macOS / Linux (one command)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aixplain/aixplain-cli/main/scripts/install.sh | sh
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/aixplain/aixplain-cli/main/scripts/install.ps1 | iex
+```
+
+### Homebrew (macOS)
+
+```bash
+brew install aixplain/tap/aix
+```
+
+### With Cargo (any platform with Rust installed)
+
+```bash
+cargo install aixplain-cli
+```
+
 ### From source
 
 ```bash
@@ -26,11 +50,17 @@ cd aixplain-cli
 cargo install --path .
 ```
 
-### With Cargo
+### Pre-built binaries
 
-```bash
-cargo install aixplain-cli
-```
+Download from [GitHub Releases](https://github.com/aixplain/aixplain-cli/releases) for:
+
+| Platform | Architecture | File |
+|----------|-------------|------|
+| Linux | x86_64 | `aix-vX.Y.Z-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux | ARM64 | `aix-vX.Y.Z-aarch64-unknown-linux-gnu.tar.gz` |
+| macOS | Intel | `aix-vX.Y.Z-x86_64-apple-darwin.tar.gz` |
+| macOS | Apple Silicon | `aix-vX.Y.Z-aarch64-apple-darwin.tar.gz` |
+| Windows | x86_64 | `aix-vX.Y.Z-x86_64-pc-windows-msvc.zip` |
 
 ## Quick start
 
