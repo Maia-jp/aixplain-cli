@@ -47,6 +47,7 @@ Implementation order follows the dependency chain. Each RFC is self-contained an
 | RFC | Title | Status | Dependencies |
 |-----|-------|--------|-------------|
 | [RFC-009](RFC-009-tui-interactive-browser.md) | TUI Interactive Browser | Draft | 001–008 |
+| [RFC-010](RFC-010-tui-agent-creation.md) | TUI Agent Creation Wizard | Draft | 004, 007, 009 |
 
 ## Dependency Graph
 

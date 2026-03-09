@@ -1,6 +1,7 @@
 pub mod app;
 mod event;
 mod ui;
+pub mod wizard;
 
 pub use app::{App, AsyncResult, Tab};
 

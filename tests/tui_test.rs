@@ -167,6 +167,157 @@ fn tui_copy_sets_status() {
     assert_eq!(app.status.kind, StatusKind::Success);
 }
 
+// ── Wizard tests ────────────────────────────────────
+
+#[test]
+fn wizard_open_create() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+    assert!(app.wizard.visible);
+    assert_eq!(app.wizard.step, aixplain_cli::tui::wizard::WizardStep::Name);
+    assert!(app.wizard.edit_id.is_none());
+}
+
+#[tokio::test]
+async fn wizard_step_through() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+
+    app.update(Message::Wiz(WizMsg::Input('T')));
+    app.update(Message::Wiz(WizMsg::Input('e')));
+    app.update(Message::Wiz(WizMsg::Input('s')));
+    app.update(Message::Wiz(WizMsg::Input('t')));
+    assert_eq!(app.wizard.name, "Test");
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(
+        app.wizard.step,
+        aixplain_cli::tui::wizard::WizardStep::Instructions
+    );
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(app.wizard.step, aixplain_cli::tui::wizard::WizardStep::Llm);
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(
+        app.wizard.step,
+        aixplain_cli::tui::wizard::WizardStep::Tools
+    );
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(
+        app.wizard.step,
+        aixplain_cli::tui::wizard::WizardStep::SubAgents
+    );
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(
+        app.wizard.step,
+        aixplain_cli::tui::wizard::WizardStep::Confirm
+    );
+}
+
+#[test]
+fn wizard_back_from_name_closes() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+    assert!(app.wizard.visible);
+
+    app.update(Message::Wiz(WizMsg::Back));
+    assert!(!app.wizard.visible);
+}
+
+#[test]
+fn wizard_back_from_instructions_goes_to_name() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+    app.wizard.name = "X".into();
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(
+        app.wizard.step,
+        aixplain_cli::tui::wizard::WizardStep::Instructions
+    );
+
+    app.update(Message::Wiz(WizMsg::Back));
+    assert_eq!(app.wizard.step, aixplain_cli::tui::wizard::WizardStep::Name);
+    assert!(app.wizard.visible);
+}
+
+#[test]
+fn wizard_empty_name_blocks_advance() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(app.wizard.step, aixplain_cli::tui::wizard::WizardStep::Name);
+}
+
+#[tokio::test]
+async fn wizard_llm_toggle() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+    app.wizard.name = "X".into();
+    app.update(Message::Wiz(WizMsg::Next));
+    app.update(Message::Wiz(WizMsg::Next));
+    assert_eq!(app.wizard.step, aixplain_cli::tui::wizard::WizardStep::Llm);
+
+    assert!(!app.wizard.llm_custom);
+    app.update(Message::Wiz(WizMsg::ToggleLlm));
+    assert!(app.wizard.llm_custom);
+    app.update(Message::Wiz(WizMsg::Input('a')));
+    assert_eq!(app.wizard.llm_id, "a");
+}
+
+#[tokio::test]
+async fn wizard_confirm_field_cycle() {
+    let (mut app, _rx) = make_test_app();
+    app.active_tab = Tab::Agents;
+    app.update(Message::OpenWizardCreate);
+    app.wizard.name = "X".into();
+    app.wizard.step = aixplain_cli::tui::wizard::WizardStep::Confirm;
+
+    assert_eq!(app.wizard.confirm_field, 0);
+    app.update(Message::Wiz(WizMsg::CycleConfirmField));
+    assert_eq!(app.wizard.confirm_field, 1);
+    app.update(Message::Wiz(WizMsg::CycleConfirmField));
+    assert_eq!(app.wizard.confirm_field, 2);
+
+    app.update(Message::Wiz(WizMsg::ToggleConfirmValue));
+    assert_eq!(
+        app.wizard.output_format,
+        aixplain_cli::tui::wizard::OutputFmt::Markdown
+    );
+}
+
+#[test]
+fn wizard_edit_prepopulates() {
+    let agent = aixplain_cli::models::agent::Agent {
+        id: Some("a123".into()),
+        name: Some("Existing Agent".into()),
+        instructions: Some("Do things".into()),
+        max_iterations: Some(10),
+        max_tokens: Some(4096),
+        ..Default::default()
+    };
+
+    let wiz = aixplain_cli::tui::wizard::AgentWizard::open_edit(&agent);
+    assert!(wiz.visible);
+    assert_eq!(wiz.edit_id.as_deref(), Some("a123"));
+    assert_eq!(wiz.name, "Existing Agent");
+    assert_eq!(wiz.instructions, "Do things");
+    assert_eq!(wiz.max_iterations, 10);
+    assert_eq!(wiz.max_tokens, 4096);
+    assert!(wiz.is_edit());
+}
+
+// ── Helpers ─────────────────────────────────────────
+
 fn default_model(name: &str) -> aixplain_cli::models::model::Model {
     aixplain_cli::models::model::Model {
         name: Some(name.to_string()),

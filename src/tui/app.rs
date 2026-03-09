@@ -225,6 +225,9 @@ pub enum AsyncResult {
         run_time: Option<f64>,
     },
     RunFailed(String),
+    WizardPickerLoaded(Vec<super::wizard::PickerItem>, i64),
+    WizardSaved(String),
+    WizardSaveFailed(String),
 }
 
 // ── Message ─────────────────────────────────────────
@@ -252,8 +255,29 @@ pub enum Message {
     RunInput(char),
     RunBackspace,
     RunExecute,
+    OpenWizardCreate,
+    OpenWizardEdit,
+    DeleteAgent,
+    Wiz(WizMsg),
     Tick,
     Quit,
+}
+
+pub enum WizMsg {
+    Next,
+    Back,
+    Input(char),
+    Backspace,
+    ToggleLlm,
+    PickerNext,
+    PickerPrev,
+    PickerToggle,
+    PickerSearch,
+    PickerSearchInput(char),
+    PickerSearchBackspace,
+    PickerSearchSubmit,
+    CycleConfirmField,
+    ToggleConfirmValue,
 }
 
 // ── App ─────────────────────────────────────────────
@@ -269,6 +293,7 @@ pub struct App {
     pub status: StatusMessage,
     pub show_help: bool,
     pub run_panel: RunPanel,
+    pub wizard: super::wizard::AgentWizard,
     pub client: Arc<AixClient>,
     pub tx: mpsc::Sender<AsyncResult>,
 }
@@ -286,6 +311,7 @@ impl App {
             status: StatusMessage::default(),
             show_help: false,
             run_panel: RunPanel::default(),
+            wizard: Default::default(),
             client,
             tx,
         }
@@ -369,6 +395,20 @@ impl App {
                     self.execute_run();
                 }
             }
+            Message::OpenWizardCreate => {
+                if self.active_tab == Tab::Agents {
+                    self.wizard = super::wizard::AgentWizard::open_create();
+                    self.load_wizard_picker();
+                }
+            }
+            Message::OpenWizardEdit => {
+                if let Some(agent) = self.agents.selected_item() {
+                    self.wizard = super::wizard::AgentWizard::open_edit(agent);
+                    self.load_wizard_picker();
+                }
+            }
+            Message::DeleteAgent => self.delete_selected_agent(),
+            Message::Wiz(wm) => self.handle_wizard_msg(wm),
             Message::Tick => self.tick_status(),
         }
 
@@ -405,6 +445,51 @@ impl App {
             AsyncResult::RunFailed(msg) => {
                 self.run_panel.running = false;
                 self.run_panel.error = Some(msg);
+            }
+            AsyncResult::WizardPickerLoaded(items, total) => {
+                let existing_ids: std::collections::HashSet<&str> = match self.wizard.step {
+                    super::wizard::WizardStep::Tools => self
+                        .wizard
+                        .selected_tools
+                        .iter()
+                        .map(|t| t.id.as_str())
+                        .collect(),
+                    super::wizard::WizardStep::SubAgents => self
+                        .wizard
+                        .selected_subagents
+                        .iter()
+                        .map(|a| a.id.as_str())
+                        .collect(),
+                    _ => Default::default(),
+                };
+                let items_with_checks: Vec<super::wizard::PickerItem> = items
+                    .into_iter()
+                    .map(|mut i| {
+                        i.checked = existing_ids.contains(i.id.as_str());
+                        i
+                    })
+                    .collect();
+                self.wizard.picker.items = items_with_checks;
+                self.wizard.picker.total = total;
+                self.wizard.picker.loading = false;
+                self.wizard.picker.selected = 0;
+            }
+            AsyncResult::WizardSaved(id) => {
+                self.wizard.saving = false;
+                self.wizard.saved_id = Some(id);
+                self.set_status(
+                    if self.wizard.is_edit() {
+                        "Agent updated"
+                    } else {
+                        "Agent created"
+                    },
+                    StatusKind::Success,
+                );
+                self.reload_agents();
+            }
+            AsyncResult::WizardSaveFailed(msg) => {
+                self.wizard.saving = false;
+                self.wizard.save_error = Some(msg);
             }
         }
     }
@@ -742,6 +827,260 @@ impl App {
                     }
                 }
             }
+        });
+    }
+
+    fn handle_wizard_msg(&mut self, wm: WizMsg) {
+        use super::wizard::WizardStep as WS;
+        if !self.wizard.visible {
+            return;
+        }
+
+        if self.wizard.saved_id.is_some() {
+            self.wizard = Default::default();
+            return;
+        }
+
+        match wm {
+            WizMsg::Back => {
+                if self.wizard.picker.search_active {
+                    self.wizard.picker.search_active = false;
+                } else if let Some(prev) = self.wizard.step.prev() {
+                    self.wizard.step = prev;
+                    if matches!(prev, WS::Tools | WS::SubAgents) {
+                        self.load_wizard_picker();
+                    }
+                } else {
+                    self.wizard = Default::default();
+                }
+            }
+            WizMsg::Next => {
+                if self.wizard.save_error.is_some() {
+                    self.wizard.save_error = None;
+                    return;
+                }
+                if !self.wizard.can_advance() {
+                    return;
+                }
+                if self.wizard.step == WS::Tools {
+                    self.wizard.selected_tools = self.wizard.picker.checked_items();
+                }
+                if self.wizard.step == WS::SubAgents {
+                    self.wizard.selected_subagents = self.wizard.picker.checked_items();
+                }
+                if let Some(next) = self.wizard.step.next() {
+                    self.wizard.step = next;
+                    if matches!(next, WS::Tools | WS::SubAgents) {
+                        self.load_wizard_picker();
+                    }
+                } else {
+                    self.save_wizard();
+                }
+            }
+            WizMsg::Input(c) => match self.wizard.step {
+                WS::Name => self.wizard.name.push(c),
+                WS::Instructions => self.wizard.instructions.push(c),
+                WS::Llm if self.wizard.llm_custom => self.wizard.llm_id.push(c),
+                _ => {}
+            },
+            WizMsg::Backspace => match self.wizard.step {
+                WS::Name => {
+                    self.wizard.name.pop();
+                }
+                WS::Instructions => {
+                    self.wizard.instructions.pop();
+                }
+                WS::Llm if self.wizard.llm_custom => {
+                    self.wizard.llm_id.pop();
+                }
+                _ => {}
+            },
+            WizMsg::ToggleLlm => {
+                self.wizard.llm_custom = !self.wizard.llm_custom;
+            }
+            WizMsg::PickerNext => self.wizard.picker.select_next(),
+            WizMsg::PickerPrev => self.wizard.picker.select_prev(),
+            WizMsg::PickerToggle => self.wizard.picker.toggle_selected(),
+            WizMsg::PickerSearch => {
+                self.wizard.picker.search_active = true;
+                self.wizard.picker.search_query.clear();
+            }
+            WizMsg::PickerSearchInput(c) => self.wizard.picker.search_query.push(c),
+            WizMsg::PickerSearchBackspace => {
+                self.wizard.picker.search_query.pop();
+            }
+            WizMsg::PickerSearchSubmit => {
+                self.wizard.picker.search_active = false;
+                self.load_wizard_picker();
+            }
+            WizMsg::CycleConfirmField => {
+                self.wizard.confirm_field = (self.wizard.confirm_field + 1) % 4;
+            }
+            WizMsg::ToggleConfirmValue => match self.wizard.confirm_field {
+                0 => {
+                    self.wizard.max_iterations = match self.wizard.max_iterations {
+                        5 => 10,
+                        10 => 20,
+                        _ => 5,
+                    };
+                }
+                1 => {
+                    self.wizard.max_tokens = match self.wizard.max_tokens {
+                        2048 => 4096,
+                        4096 => 8192,
+                        _ => 2048,
+                    };
+                }
+                2 => self.wizard.output_format = self.wizard.output_format.cycle(),
+                3 => self.wizard.as_draft = !self.wizard.as_draft,
+                _ => {}
+            },
+        }
+    }
+
+    fn load_wizard_picker(&mut self) {
+        self.wizard.picker.reset();
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        let query = if self.wizard.picker.search_query.is_empty() {
+            None
+        } else {
+            Some(self.wizard.picker.search_query.clone())
+        };
+
+        match self.wizard.step {
+            super::wizard::WizardStep::Tools => {
+                tokio::spawn(async move {
+                    match crate::api::tools::search_tools(&client, query.as_deref(), 0, 50).await {
+                        Ok(page) => {
+                            let items: Vec<super::wizard::PickerItem> = page
+                                .results
+                                .iter()
+                                .map(|t| super::wizard::PickerItem {
+                                    id: t.model.id.clone().unwrap_or_default(),
+                                    name: t.model.name.clone().unwrap_or_default(),
+                                    checked: false,
+                                })
+                                .collect();
+                            tx.send(AsyncResult::WizardPickerLoaded(items, page.total))
+                                .await
+                                .ok();
+                        }
+                        Err(e) => {
+                            tx.send(AsyncResult::WizardSaveFailed(e.to_string()))
+                                .await
+                                .ok();
+                        }
+                    }
+                });
+            }
+            super::wizard::WizardStep::SubAgents => {
+                tokio::spawn(async move {
+                    match crate::api::agents::search_agents(&client, query.as_deref(), 0, 50).await
+                    {
+                        Ok(page) => {
+                            let items: Vec<super::wizard::PickerItem> = page
+                                .results
+                                .iter()
+                                .map(|a| super::wizard::PickerItem {
+                                    id: a.id.clone().unwrap_or_default(),
+                                    name: a.name.clone().unwrap_or_default(),
+                                    checked: false,
+                                })
+                                .collect();
+                            tx.send(AsyncResult::WizardPickerLoaded(items, page.total))
+                                .await
+                                .ok();
+                        }
+                        Err(e) => {
+                            tx.send(AsyncResult::WizardSaveFailed(e.to_string()))
+                                .await
+                                .ok();
+                        }
+                    }
+                });
+            }
+            _ => {}
+        }
+    }
+
+    fn save_wizard(&mut self) {
+        self.wizard.saving = true;
+        self.wizard.save_error = None;
+
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        let payload = self.wizard.build_payload();
+        let edit_id = self.wizard.edit_id.clone();
+
+        tokio::spawn(async move {
+            let result: Result<serde_json::Value, crate::client::AixError> =
+                if let Some(id) = edit_id {
+                    client.put(&format!("v2/agents/{id}"), &payload).await
+                } else {
+                    client.post("v2/agents", &payload).await
+                };
+
+            match result {
+                Ok(val) => {
+                    let id = val
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    tx.send(AsyncResult::WizardSaved(id)).await.ok();
+                }
+                Err(e) => {
+                    tx.send(AsyncResult::WizardSaveFailed(e.to_string()))
+                        .await
+                        .ok();
+                }
+            }
+        });
+    }
+
+    fn delete_selected_agent(&mut self) {
+        if self.active_tab != Tab::Agents {
+            return;
+        }
+        let Some(agent) = self.agents.selected_item() else {
+            return;
+        };
+        let id = agent.id.clone().unwrap_or_default();
+        let name = agent.name.clone().unwrap_or_default();
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+
+        self.set_status(&format!("Deleting {name}..."), StatusKind::Info);
+
+        tokio::spawn(async move {
+            match crate::api::agents::delete_agent(&client, &id).await {
+                Ok(()) => {
+                    tx.send(AsyncResult::WizardSaved("deleted".into()))
+                        .await
+                        .ok();
+                }
+                Err(e) => {
+                    tx.send(AsyncResult::WizardSaveFailed(e.to_string()))
+                        .await
+                        .ok();
+                }
+            }
+        });
+    }
+
+    fn reload_agents(&mut self) {
+        self.agents.loading = true;
+        let client = self.client.clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            match crate::api::agents::search_agents(&client, None, 0, 20).await {
+                Ok(p) => tx.send(AsyncResult::AgentsLoaded(p)).await.ok(),
+                Err(e) => tx
+                    .send(AsyncResult::LoadFailed(Tab::Agents, e.to_string()))
+                    .await
+                    .ok(),
+            };
         });
     }
 

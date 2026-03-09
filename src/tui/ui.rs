@@ -47,6 +47,10 @@ pub fn render(f: &mut Frame, app: &App) {
     if app.run_panel.visible {
         render_run_panel(f, app);
     }
+
+    if app.wizard.visible {
+        render_wizard(f, app);
+    }
 }
 
 // ── Tabs ────────────────────────────────────────────
@@ -524,6 +528,12 @@ fn render_status_bar(f: &mut Frame, app: &App, area: Rect) {
             " Type to search · Enter submit · Esc cancel".to_string(),
             Style::default().fg(YELLOW),
         )
+    } else if app.active_tab == Tab::Agents {
+        Span::styled(
+            " j/k navigate  l detail  r run  n new  e edit  d delete  ]/[ tabs  / search  ? help  q quit"
+                .to_string(),
+            Style::default().fg(GRAY),
+        )
     } else {
         Span::styled(
             " j/k navigate  l detail  r run  ]/[ tabs  / search  c copy  ? help  q quit"
@@ -739,6 +749,333 @@ fn render_run_panel(f: &mut Frame, app: &App) {
             "Esc to close · r to run again",
             Style::default().fg(GRAY),
         )));
+    }
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    f.render_widget(para, inner);
+}
+
+// ── Agent wizard ────────────────────────────────────
+
+fn render_wizard(f: &mut Frame, app: &App) {
+    use super::wizard::WizardStep as WS;
+
+    let area = centered_rect(75, 80, f.area());
+    f.render_widget(Clear, area);
+
+    let wiz = &app.wizard;
+    let mode = if wiz.is_edit() { "Edit" } else { "Create" };
+    let step_num = wiz.step.index() + 1;
+    let title = format!(" {mode} Agent — Step {step_num}/6: {} ", wiz.step.label());
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(CYAN))
+        .title(Span::styled(
+            title,
+            Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+        ))
+        .padding(Padding::new(2, 2, 1, 1));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    if wiz.saving {
+        let para = Paragraph::new(Line::from(Span::styled(
+            "  ◌ Saving...",
+            Style::default().fg(YELLOW),
+        )));
+        f.render_widget(para, inner);
+        return;
+    }
+
+    if let Some(ref id) = wiz.saved_id {
+        let lines = vec![
+            Line::from(Span::styled(
+                "  ✓ Agent saved!",
+                Style::default().fg(GREEN).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(format!("  ID: {id}")),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press any key to close",
+                Style::default().fg(GRAY),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
+    if let Some(ref err) = wiz.save_error {
+        let lines = vec![
+            Line::from(Span::styled(
+                "  Error:",
+                Style::default().fg(RED).add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(format!("  {err}"), Style::default().fg(RED))),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press any key to dismiss",
+                Style::default().fg(GRAY),
+            )),
+        ];
+        f.render_widget(Paragraph::new(lines), inner);
+        return;
+    }
+
+    let cursor = "▏";
+    let mut lines: Vec<Line> = Vec::new();
+
+    match wiz.step {
+        WS::Name => {
+            lines.push(Line::from(Span::styled(
+                "Agent Name:",
+                Style::default().fg(YELLOW),
+            )));
+            lines.push(Line::from(""));
+            let display = if wiz.name.is_empty() {
+                Span::styled(
+                    format!("  Type a name...{cursor}"),
+                    Style::default().fg(GRAY),
+                )
+            } else {
+                Span::styled(
+                    format!("  {}{cursor}", wiz.name),
+                    Style::default().fg(WHITE),
+                )
+            };
+            lines.push(Line::from(display));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Enter → next  ·  Esc → cancel",
+                Style::default().fg(GRAY),
+            )));
+        }
+
+        WS::Instructions => {
+            lines.push(Line::from(Span::styled(
+                "Instructions (system prompt):",
+                Style::default().fg(YELLOW),
+            )));
+            lines.push(Line::from(""));
+            let display = if wiz.instructions.is_empty() {
+                Span::styled(
+                    format!("  Describe what this agent should do...{cursor}"),
+                    Style::default().fg(GRAY),
+                )
+            } else {
+                Span::styled(
+                    format!("  {}{cursor}", wiz.instructions),
+                    Style::default().fg(WHITE),
+                )
+            };
+            lines.push(Line::from(display));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Use {{variable}} for runtime placeholders",
+                Style::default().fg(GRAY),
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Enter → next  ·  Esc → back",
+                Style::default().fg(GRAY),
+            )));
+        }
+
+        WS::Llm => {
+            lines.push(Line::from(Span::styled(
+                "Select LLM:",
+                Style::default().fg(YELLOW),
+            )));
+            lines.push(Line::from(""));
+            let default_marker = if !wiz.llm_custom { "▸ " } else { "  " };
+            let custom_marker = if wiz.llm_custom { "▸ " } else { "  " };
+            lines.push(Line::from(Span::styled(
+                format!("{default_marker}Default (GPT-4o — 669a636...)"),
+                if !wiz.llm_custom {
+                    Style::default().fg(WHITE).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(GRAY)
+                },
+            )));
+            let custom_text = if wiz.llm_id.is_empty() {
+                format!("{custom_marker}Custom: enter model ID...{cursor}")
+            } else {
+                format!("{custom_marker}Custom: {}{cursor}", wiz.llm_id)
+            };
+            lines.push(Line::from(Span::styled(
+                custom_text,
+                if wiz.llm_custom {
+                    Style::default().fg(WHITE).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(GRAY)
+                },
+            )));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Tab/Space → toggle  ·  Enter → next  ·  Esc → back",
+                Style::default().fg(GRAY),
+            )));
+        }
+
+        WS::Tools | WS::SubAgents => {
+            let kind = if wiz.step == WS::Tools {
+                "tools"
+            } else {
+                "sub-agents"
+            };
+            let selected = if wiz.step == WS::Tools {
+                &wiz.selected_tools
+            } else {
+                &wiz.selected_subagents
+            };
+
+            lines.push(Line::from(Span::styled(
+                format!("Attach {kind} (optional):"),
+                Style::default().fg(YELLOW),
+            )));
+
+            if !selected.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    format!("  Selected ({}):", selected.len()),
+                    Style::default().fg(GREEN),
+                )));
+                for s in selected.iter().take(3) {
+                    lines.push(Line::from(format!("    ✓ {}", s.name)));
+                }
+                if selected.len() > 3 {
+                    lines.push(Line::from(Span::styled(
+                        format!("    ... and {} more", selected.len() - 3),
+                        Style::default().fg(GRAY),
+                    )));
+                }
+            }
+
+            lines.push(Line::from(""));
+
+            if wiz.picker.search_active {
+                lines.push(Line::from(Span::styled(
+                    format!("  /{}{cursor}", wiz.picker.search_query),
+                    Style::default().fg(YELLOW),
+                )));
+            }
+
+            if wiz.picker.loading {
+                lines.push(Line::from(Span::styled(
+                    "  ◌ Loading...",
+                    Style::default().fg(YELLOW),
+                )));
+            } else if wiz.picker.items.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  No items found.",
+                    Style::default().fg(GRAY),
+                )));
+            } else {
+                let visible_height = inner.height.saturating_sub(lines.len() as u16 + 2) as usize;
+                let start = if wiz.picker.selected >= visible_height {
+                    wiz.picker.selected - visible_height + 1
+                } else {
+                    0
+                };
+
+                for (i, item) in wiz
+                    .picker
+                    .items
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(visible_height.max(3))
+                {
+                    let check = if item.checked { "✓" } else { " " };
+                    let arrow = if i == wiz.picker.selected { "▸" } else { " " };
+                    let style = if i == wiz.picker.selected {
+                        Style::default().fg(WHITE).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                    };
+                    lines.push(Line::from(Span::styled(
+                        format!("  {arrow} [{check}] {}", item.name),
+                        style,
+                    )));
+                }
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Space → toggle  ·  / search  ·  Enter → next  ·  Esc → back",
+                Style::default().fg(GRAY),
+            )));
+        }
+
+        WS::Confirm => {
+            lines.push(Line::from(Span::styled(
+                "Configuration:",
+                Style::default().fg(YELLOW),
+            )));
+            lines.push(Line::from(""));
+
+            let fields = [
+                format!("Max Iterations:  {}", wiz.max_iterations),
+                format!("Max Tokens:      {}", wiz.max_tokens),
+                format!("Output Format:   {}", wiz.output_format.as_str()),
+                format!(
+                    "Save as Draft:   {}",
+                    if wiz.as_draft { "Yes" } else { "No" }
+                ),
+            ];
+            for (i, field) in fields.iter().enumerate() {
+                let marker = if i == wiz.confirm_field { "▸ " } else { "  " };
+                let style = if i == wiz.confirm_field {
+                    Style::default().fg(WHITE).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {marker}{field}"),
+                    style,
+                )));
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Summary:",
+                Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+            )));
+            lines.push(Line::from(format!("  Name:         {}", wiz.name)));
+            let inst_preview = if wiz.instructions.len() > 50 {
+                format!("{}...", &wiz.instructions[..50])
+            } else if wiz.instructions.is_empty() {
+                "(none)".into()
+            } else {
+                wiz.instructions.clone()
+            };
+            lines.push(Line::from(format!("  Instructions: {inst_preview}")));
+            let llm = if wiz.llm_custom && !wiz.llm_id.is_empty() {
+                &wiz.llm_id
+            } else {
+                "Default"
+            };
+            lines.push(Line::from(format!("  LLM:          {llm}")));
+            lines.push(Line::from(format!(
+                "  Tools:        {} attached",
+                wiz.selected_tools.len()
+            )));
+            lines.push(Line::from(format!(
+                "  Sub-agents:   {}",
+                wiz.selected_subagents.len()
+            )));
+
+            lines.push(Line::from(""));
+            let action = if wiz.is_edit() { "Update" } else { "Create" };
+            lines.push(Line::from(Span::styled(
+                format!(
+                    "Tab → cycle fields  ·  Space → change  ·  Enter → {action}  ·  Esc → back"
+                ),
+                Style::default().fg(GRAY),
+            )));
+        }
     }
 
     let para = Paragraph::new(lines).wrap(Wrap { trim: false });
